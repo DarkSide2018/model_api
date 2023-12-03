@@ -1,4 +1,8 @@
-from fastapi import FastAPI
+import io
+
+import uvicorn
+from fastapi import FastAPI, UploadFile
+from fastapi.openapi.models import Response
 from pydantic import BaseModel
 from typing import List
 import pandas as pd
@@ -6,6 +10,7 @@ import numpy as np
 import random
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score, mean_squared_error
+from starlette.responses import StreamingResponse
 
 app = FastAPI()
 
@@ -20,7 +25,8 @@ model = LinearRegression()
 random.seed(42)
 np.random.seed(42)
 
-
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 class Item(BaseModel):
     name: str
     year: int
@@ -54,9 +60,31 @@ def predict_item(item: Item) -> float:
 
 
 @app.post("/predict_items")
-def predict_items(items: List[Item]) -> List[float]:
-    return 78
-
+async def upload_items_csv (file: UploadFile):
+    # Сохранение загруженного файла
+    contents = await file.read()
+    with open(file.filename, "wb") as f:
+        f.write(contents)
+    print("Успешно загружен файл")
+    df = pd.read_csv(file.filename)
+    df.drop('name', axis=1, inplace=True)
+    df.drop('fuel', axis=1, inplace=True)
+    df.drop('seller_type', axis=1, inplace=True)
+    df.drop('transmission', axis=1, inplace=True)
+    df.drop('owner', axis=1, inplace=True)
+    df.drop('torque', axis=1, inplace=True)
+    df['mileage'] = df['mileage'].astype(str).str.replace(' kmpl', '').str.replace(' km/kg','').astype( float)
+    df['engine'] = df['engine'].astype(str).str.replace(' CC', '').astype(float)
+    df['max_power'] = df['max_power'] = pd.to_numeric(df['max_power'].astype(str).str.replace(' bhp', ''), errors='coerce')
+    print(df)
+    predictions = model.predict(df)
+    df["predictions"] = predictions
+    output = io.StringIO()
+    df.to_csv(output, index=False)
+    print("подготовка ответа",output.getvalue())
+    response = StreamingResponse(iter([output.getvalue()]),media_type="text/csv")
+    response.headers["Content-Disposition"] = "attachment; filename=export.csv"
+    return response
 
 @app.on_event('startup')
 async def startup_event():
